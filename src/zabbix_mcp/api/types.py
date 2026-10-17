@@ -32,6 +32,7 @@ class ParamDef:
     description: str
     required: bool = False
     default: Any = None
+    json_schema: dict[str, Any] | None = None  # Additional published schema; runtime checks stay explicit.
 
 
 @dataclass(frozen=True)

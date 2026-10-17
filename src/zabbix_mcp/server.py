@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Annotated, Any, Optional
 
 from pydantic import Field
+from zabbix_utils.exceptions import APIRequestError
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.mcpserver.utilities import func_metadata as _fm_module
@@ -53,8 +54,10 @@ from mcp.types import (
 )
 
 from zabbix_mcp.api import ALL_METHODS
+from zabbix_mcp.api.action_filter import ActionFilterError, validate_action_filter
 from zabbix_mcp.api.types import MethodDef, ParamDef
 from zabbix_mcp.api.versions import unavailable_reason
+from zabbix_mcp.api_errors import API_ERROR_FALLBACK, safe_api_error
 from zabbix_mcp.client import ClientManager, RateLimitError, ReadOnlyError
 from zabbix_mcp.config import AppConfig
 from zabbix_mcp.timezones import EPOCH_FIELDS, add_local_times, now_local, resolve_zone, zone_name
@@ -1779,6 +1782,8 @@ def _make_tool_handler(
             if not method_def.read_only:
                 client_manager.check_write(server_name)
 
+            validate_action_filter(method_def.api_method, kwargs.get("params"))
+
             zabbix_version = await asyncio.to_thread(
                 client_manager.get_version, server_name,
             )
@@ -1823,6 +1828,9 @@ def _make_tool_handler(
             raise
         except (ReadOnlyError, RateLimitError, ValueError) as e:
             raise ToolError(str(e))
+        except APIRequestError as exc:
+            logger.exception("Zabbix rejected %s", method_def.api_method)
+            raise ToolError(safe_api_error(exc)) from None
         except Exception:
             logger.exception("Error calling %s on server '%s'", method_def.api_method, server_name)
             raise ToolError(
@@ -1848,10 +1856,10 @@ def _make_tool_handler(
     for p in method_def.params:
         python_type = _PYTHON_TYPES.get(p.param_type, str)
         if p.required:
-            annotation = Annotated[python_type, Field(description=p.description)]
+            annotation = Annotated[python_type, Field(description=p.description, json_schema_extra=p.json_schema)]
             default = inspect.Parameter.empty
         else:
-            annotation = Annotated[Optional[python_type], Field(description=p.description)]
+            annotation = Annotated[Optional[python_type], Field(description=p.description, json_schema_extra=p.json_schema)]
             default = p.default
         sig_params.append(inspect.Parameter(
             p.name,
@@ -2003,6 +2011,8 @@ def _register_tools(
             if not is_read_only:
                 client_manager.check_write(server_name)
 
+            validate_action_filter(method, params)
+
             _refuse_if_unavailable(
                 method, await asyncio.to_thread(client_manager.get_version, server_name),
             )
@@ -2016,6 +2026,9 @@ def _register_tools(
             raise
         except (ReadOnlyError, RateLimitError, ValueError) as e:
             raise ToolError(str(e))
+        except APIRequestError as exc:
+            logger.exception("Zabbix rejected raw API call '%s'", method)
+            raise ToolError(safe_api_error(exc)) from None
         except Exception:
             logger.exception("Error in raw API call '%s' on server '%s'", method, server_name)
             raise ToolError(
@@ -2736,7 +2749,8 @@ def _register_tools(
 
         try:
             client_manager.check_write(srv)
-        except ReadOnlyError as e:
+            validate_action_filter(action, params)
+        except (ReadOnlyError, ActionFilterError) as e:
             raise ToolError(str(e))
 
         # Generate secure token
@@ -2835,6 +2849,7 @@ def _register_tools(
             raise ToolError(str(e))
 
         try:
+            validate_action_filter(action_data["action"], action_data["params"])
             result = await asyncio.to_thread(
                 client_manager.call, action_data["server"],
                 action_data["action"], action_data["params"],
@@ -2847,9 +2862,14 @@ def _register_tools(
             })
         except ToolError:
             raise
-        except Exception as exc:
+        except (ActionFilterError, ReadOnlyError, RateLimitError) as exc:
+            raise ToolError(str(exc)) from None
+        except APIRequestError as exc:
+            logger.exception("Zabbix rejected prepared action: %s", action_data["action"])
+            raise ToolError(safe_api_error(exc)) from None
+        except Exception:
             logger.exception("Action execution failed: %s", action_data["action"])
-            raise ToolError(f"Execution failed: {exc} (action: {action_data['action']})")
+            raise ToolError(API_ERROR_FALLBACK) from None
 
     if _ext_allowed("action_confirm"):
         mcp.add_tool(

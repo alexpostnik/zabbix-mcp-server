@@ -33,6 +33,7 @@ This module covers the "Alerts & Actions" domain of the Zabbix API:
 
 from zabbix_mcp.api.types import MethodDef, ParamDef
 from zabbix_mcp.api.common import COMMON_GET_PARAMS, CREATE_PARAMS, UPDATE_PARAMS, DELETE_PARAMS
+from zabbix_mcp.api.action_filter import ACTION_FILTER_DESCRIPTION, ACTION_FILTER_SCHEMA
 
 # ---------------------------------------------------------------------------
 # action
@@ -60,6 +61,19 @@ _ACTION_GET_EXTRA: list[ParamDef] = [
         "Return only actions with the given event source. "
         "Values: 0 = trigger events, 1 = discovery events, "
         "2 = autoregistration events, 3 = internal events, 4 = service events.",
+    ),
+]
+
+_ACTION_PARAMS: list[ParamDef] = [
+    ParamDef(
+        "params", "dict",
+        "Action properties. For create include name, eventsource and operations; "
+        "for update include actionid and only properties to change. " + ACTION_FILTER_DESCRIPTION,
+        required=True,
+        json_schema={
+            "properties": {"filter": ACTION_FILTER_SCHEMA},
+            "additionalProperties": True,
+        },
     ),
 ]
 
@@ -93,7 +107,7 @@ _ACTION_METHODS: list[MethodDef] = [
             "AUTOREGISTRATION, INTERNAL, SERVICE."
         ),
         read_only=False,
-        params=CREATE_PARAMS,
+        params=_ACTION_PARAMS,
     ),
     MethodDef(
         api_method="action.update",
@@ -105,7 +119,7 @@ _ACTION_METHODS: list[MethodDef] = [
             "or change notification recipients."
         ),
         read_only=False,
-        params=UPDATE_PARAMS,
+        params=_ACTION_PARAMS,
     ),
     MethodDef(
         api_method="action.delete",
