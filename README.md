@@ -1042,6 +1042,26 @@ The same mechanism works per-token via `[tokens.*].scopes` - see [MCP Authentica
 <tr><td><code>countOutput</code></td><td>Return the count of matching objects instead of the actual data — useful for statistics</td></tr>
 </table>
 
+## Action filter parameters and validation errors
+
+`action_create` and `action_update` advertise the nested `params.filter` fields
+in their tool schemas. For `evaltype` 0 (And/Or), 1 (And), or 2 (Or), omit both
+`filter.formula` and each condition's `formulaid`, including when reusing a
+filter returned by `action_get`. For `evaltype=3` (custom expression), supply
+`formula` and matching `formulaid` labels. An update that only changes `status`
+does not need a filter.
+
+Incompatible filter fields produce a tool error naming the field before any
+backend version, time-zone, or write request. The same check applies to raw API
+calls and the prepare/confirm flow. Other fields and event-source-specific
+condition rules are still validated by Zabbix.
+
+Recognized structured Zabbix parameter errors return a safe field path and
+reason through MCP `isError=true`. Other `APIRequestError` responses and plain
+`ProcessingError` failures remain generic: arbitrary backend messages,
+parameter values, URLs, and credentials are not copied into these responses.
+See [examples, scope, and test evidence](docs/ACTION-FILTER-VALIDATION.md).
+
 ## Time zones
 
 Zabbix returns every timestamp as a Unix epoch and its frontend renders it in the user's zone. An LLM sees only the epoch and, with nothing to anchor on, answers "what happened in the last hour" an hour off (GitHub issue #75). Since v1.38 the server resolves one zone per tool call, first hit wins:
