@@ -77,15 +77,15 @@ def test_nested_read_only_ids_are_removed_in_place() -> None:
 
 def test_nested_id_removal_is_scoped_to_exact_keys() -> None:
     payload = {"operations": [{
-        "opconditions": [{"opconditionid": "71", "operationid": "42", "hostid": "keep"}],
-        "opcommand_hst": [{"opcommand_hstid": "81", "operationid": "keep", "hostid": "0"}],
-        "opcommand_grp": [{"opcommand_grpid": "91", "operationid": "keep", "groupid": "20"}],
+        "opconditions": [{"opconditionid": "71", "operationid": "42", "caller_field": "keep"}],
+        "opcommand_hst": [{"opcommand_hstid": "81", "future_id": "keep", "hostid": "0"}],
+        "opcommand_grp": [{"opcommand_grpid": "91", "caller_field": "keep", "groupid": "20"}],
     }]}
 
     assert strip_for_write(payload) == {"operations": [{
-        "opconditions": [{"hostid": "keep"}],
-        "opcommand_hst": [{"operationid": "keep", "hostid": "0"}],
-        "opcommand_grp": [{"operationid": "keep", "groupid": "20"}],
+        "opconditions": [{"caller_field": "keep"}],
+        "opcommand_hst": [{"future_id": "keep", "hostid": "0"}],
+        "opcommand_grp": [{"caller_field": "keep", "groupid": "20"}],
     }]}
 
 
@@ -176,7 +176,7 @@ class _ActionManager:
 @pytest.mark.parametrize("tool,source", [
     ("action_create", "TRIGGER"), ("action_update", "0"), ("action_update", None),
 ])
-def test_registered_action_tools_send_clean_nested_payload_and_preserve_input(tool: str, source: Any) -> None:
+def test_registered_action_tools_send_clean_payload_with_fixture_isolation(tool: str, source: Any) -> None:
     manager = _ActionManager()
     mcp = MCPServer(name="nested-action-test")
     _register_tools(mcp, manager, tools_filter=["action"])
@@ -194,7 +194,8 @@ def test_registered_action_tools_send_clean_nested_payload_and_preserve_input(to
         expected["eventsource"] = 0 if source == "TRIGGER" else source
     snapshot = copy.deepcopy(payload)
 
-    asyncio.run(mcp.call_tool(tool, {"params": payload}))
+    # The sanitizer is in-place; isolate the read fixture before dispatch.
+    asyncio.run(mcp.call_tool(tool, {"params": copy.deepcopy(payload)}))
 
     lookup = [("action.get", {"output": ["eventsource"], "actionids": ["3"]})] if source is None else []
     assert manager.sent == lookup + [(tool.replace("_", "."), expected)]
@@ -209,10 +210,12 @@ def test_failed_source_lookup_still_strips_nested_read_only_ids() -> None:
     payload = {"actionid": "3", "operations": [_read_operation()]}
     snapshot = copy.deepcopy(payload)
 
-    asyncio.run(mcp.call_tool("action_update", {"params": payload}))
+    # The sanitizer is in-place; isolate the read fixture before dispatch.
+    asyncio.run(mcp.call_tool("action_update", {"params": copy.deepcopy(payload)}))
 
     assert manager.sent == [
         ("action.get", {"output": ["eventsource"], "actionids": ["3"]}),
         ("action.update", {"actionid": "3", "operations": [_write_operation()]}),
     ]
+    assert manager.write_checks == ["t"]
     assert payload == snapshot
